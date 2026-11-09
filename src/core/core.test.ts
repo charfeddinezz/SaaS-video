@@ -8,6 +8,8 @@ import { Pipeline, PipelineError, gates, type PipelineEvent } from './pipeline.j
 import { PolicyGuard, PolicyError } from './policy.js';
 import { buildYouTubeArgs, SocialAutoUpload, UploadValidationError } from '../upload/social-auto-upload.js';
 import type { Artifact, Catalog, JobSpec, SiteEntry } from './types.js';
+import { createShortsPackage } from './studio.js';
+import { runArabicShortsJob } from '../jobrunner.js';
 
 const job: JobSpec = {
   id: 'job-1',
@@ -215,4 +217,28 @@ test('uploader parses the returned video id and reports failure codes', async ()
   const failed = await failing.uploadYouTube({ account: 'a', file: 'f.mp4', title: 't', description: 'd' });
   assert.equal(failed.ok, false);
   assert.equal(failed.videoId, null);
+});
+
+test('studio creates a timed Arabic script and storyboard package', () => {
+  const production = createShortsPackage('كيف نبني عادة القراءة؟', { durationSec: 30 });
+  assert.equal(production.deliverable, 'script-and-storyboard');
+  assert.equal(production.shots.length, 4);
+  assert.equal(production.shots.reduce((sum, shot) => sum + shot.durationSec, 0), 30);
+  assert.ok(production.script.includes(production.topic));
+  assert.throws(() => createShortsPackage('  '), /ثلاثة أحرف/);
+});
+
+test('job runner exports a production package without claiming to render video', async () => {
+  const events: PipelineEvent[] = [];
+  const result = await runArabicShortsJob('التعلم بالممارسة', {
+    onEvent: (event) => events.push(event),
+    sleep: async () => undefined,
+  });
+
+  assert.equal(result.status, 'done');
+  if (result.status !== 'done') return;
+  assert.equal(result.artifact.kind, 'json');
+  assert.equal(result.artifact.path, 'production-package.json');
+  assert.match(result.output, /لم يتم توليد ملف فيديو/);
+  assert.ok(events.some((event) => event.type === 'job:done'));
 });

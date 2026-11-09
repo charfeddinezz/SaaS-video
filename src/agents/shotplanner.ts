@@ -84,7 +84,6 @@ export function planShotsDiverse(
     // $FlowFixMe
     // $FlowFixMe: indices may be undefined
     const prev: ShotSpec | undefined = applied[i - 1];
-    // $FlowFixMe
     const curr: ShotSpec | undefined = applied[i];
     if (prev == null || curr == null || prev.prompt == null || curr.prompt == null) continue;
     // $FlowFixMe
@@ -94,12 +93,8 @@ export function planShotsDiverse(
     if (prevFp === currFp || (prevFp.substring(0, 5) === currFp.substring(0, 5) && Math.random() < 0.5)) {
       const modifiers = ['close-up shot of', 'wide angle of', ' aerial view of', 'macro of', 'point-of-view of'];
       const mod = modifiers[Math.floor(Math.random() * modifiers.length)];
-      // $FlowFixMe
-      // $FlowFixMe: applied[i] may still be TS-unaware
-      applied[i].prompt = mod + ' ' + String(curr.prompt);
-      // $FlowFixMe
-      // $FlowFixMe: applied[i] may still be TS-unaware
-      applied[i].durationSec = Math.min(12, (applied[i].durationSec ?? 6) + 2);
+      curr.prompt = mod + ' ' + curr.prompt;
+      curr.durationSec = Math.min(12, curr.durationSec + 2);
     }
   }
 

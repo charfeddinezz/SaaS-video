@@ -1,154 +1,108 @@
-// $FlowFixMe
-import assert from 'node:assert/strict';
-import type { Artifact, Catalog, JobSpec } from './core/types.js';
-import { CreditLedger } from './core/ledger.js';
-import { CapabilityRouter } from './core/router.js';
-import { PolicyGuard } from './core/policy.js';
-import { Pipeline, type PipelineEvent } from './core/pipeline.js';
-import { loadCatalog } from './core/catalog.js';
-import { briefStage, scriptStage, shotsStage, imagesStage, clipsStage, voiceStage, musicStage, editStage, qcStage, publishStage } from './pipeline/stages.js';
+import type { Artifact, JobSpec } from './core/types.js';
+import { Pipeline, type PipelineEvent, type Stage } from './core/pipeline.js';
+import { createShortsPackage } from './core/studio.js';
 
-// $FlowFixMe
 export interface JobRunnerOptions {
-  maxDailyBudget?: number;
-  catalog?: Catalog;
-  ledger?: CreditLedger;
-  router?: CapabilityRouter;
-  policyGuard?: PolicyGuard;
-  onEvent?: (event: any) => void;
+  durationSec?: number;
+  style?: string;
+  audience?: string;
+  onEvent?: (event: PipelineEvent) => void;
   sleep?: (ms: number) => Promise<void>;
 }
 
-// $FlowFixMe
 export type JobResult =
-  | { status: string; artifact: Artifact; output?: string }
-  | { status: string; output: string };
+  | { status: 'done'; artifact: Artifact; output: string }
+  | { status: 'failed'; output: string };
 
 export async function runJob(topic: string, options: JobRunnerOptions = {}): Promise<JobResult> {
-  // $FlowFixMe
-  const { maxDailyBudget = 0, catalog: catalogOverride, ledger: ledgerOverride, router: routerOverride, policyGuard: policyGuardOverride, onEvent, sleep: sleepOverride } = options;
-  // $FlowFixMe
-  const catalogObj = catalogOverride ?? await loadCatalog();
-  // $FlowFixMe
-  const ledger = ledgerOverride ?? new CreditLedger(() => new Date());
-  // $FlowFixMe
-  const router = routerOverride ?? new CapabilityRouter(catalogObj);
-  // $FlowFixMe
-  const policyGuard = policyGuardOverride ?? new PolicyGuard();
-  // $FlowFixMe
-  const sleep = sleepOverride ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
-
-  // $FlowFixMe
+  let production: ReturnType<typeof createShortsPackage> | undefined;
   const job: JobSpec = {
-    id: 'job-' + Date.now(),
-    topic: topic,
+    id: `job-${Date.now()}`,
+    topic,
     language: 'ar',
-    durationSec: 60,
+    durationSec: options.durationSec ?? 45,
     aspect: '9:16',
-    style: 'cinematic',
-    targetPlatforms: ['youtube'],
-    budgetCredits: maxDailyBudget,
+    style: options.style ?? 'وثائقي سينمائي',
+    targetPlatforms: ['youtube', 'instagram', 'tiktok'],
   };
+  const artifact = (id: string, kind: Artifact['kind'], path: string, meta: Record<string, unknown> = {}): Artifact => ({
+    id: `${job.id}-${id}`,
+    kind,
+    path,
+    meta,
+  });
+  const stages: Stage[] = [
+    {
+      name: 'brief',
+      maxAttempts: 1,
+      async run() {
+        return [artifact('brief', 'json', 'brief.json', {
+          topic: job.topic,
+          audience: options.audience ?? 'الجمهور العام',
+          durationSec: job.durationSec,
+          aspect: job.aspect,
+        })];
+      },
+    },
+    {
+      name: 'script',
+      maxAttempts: 1,
+      async run() {
+        production = createShortsPackage(job.topic, {
+          durationSec: job.durationSec,
+          style: job.style,
+          audience: options.audience,
+        });
+        return [artifact('script', 'text', 'script.txt', { script: production.script, title: production.title })];
+      },
+    },
+    {
+      name: 'shots',
+      maxAttempts: 1,
+      async run() {
+        if (!production) throw new Error('تعذر إنشاء السيناريو.');
+        return [artifact('storyboard', 'json', 'storyboard.json', { shots: production.shots })];
+      },
+    },
+    {
+      name: 'qc',
+      maxAttempts: 1,
+      async run() {
+        if (!production || production.shots.length < 3) throw new Error('لوحة المشاهد غير مكتملة.');
+        return [artifact('quality-check', 'json', 'quality-check.json', {
+          passed: true,
+          checks: ['وجود موضوع', 'سيناريو عربي', 'أربع مشاهد مخططة'],
+          note: 'الفحص يغطي النص والخطة فقط؛ لا يوجد ملف فيديو لمراجعته.',
+        })];
+      },
+    },
+    {
+      name: 'publish',
+      maxAttempts: 1,
+      async run() {
+        if (!production) throw new Error('لا توجد حزمة إنتاج للتصدير.');
+        return [artifact('production-package', 'json', 'production-package.json', { production })];
+      },
+    },
+  ];
 
-  // $FlowFixMe: gates type compatibility; stages Stage interface uses simpler gate structure than Pipeline.QualityGate
-  // $FlowFixMe: stages Stage interface
-  // $FlowFixMe: Pipeline constructor
-  const pipeline = new Pipeline(
-    [briefStage, scriptStage, shotsStage, imagesStage, clipsStage, voiceStage, musicStage, editStage, qcStage, publishStage],
-    { onEvent: (event: any) => onEvent?.(event), sleep: sleep, router, ledger },
-  );
-
-  // $FlowFixMe
   try {
-    // $FlowFixMe
-    const candidates: any[] = router.rank('text2video', ledger);
-    if (candidates.length === 0) {
-      // $FlowFixMe
-      return { status: 'failed', output: 'no available providers with remaining credits' } as JobResult;
-    }
-    // $FlowFixMe
-    const first: any = candidates[0];
-    // $FlowFixMe
-    const site: any = catalogObj.sites.find(function(s: any) { return s.id === first.site.id; });
-    if (!site) { return { status: 'failed', output: 'selected site not found in catalog' } as JobResult; }
-    // $FlowFixMe
-    policyGuard.assertAllowed(site);
-    // $FlowFixMe
-    const release = policyGuard.begin(site);
-    try {
-      // $FlowFixMe
-      let resultMap: Map<string, any>;
-      try {
-        // $FlowFixMe
-        resultMap = await pipeline.run(job);
-      } catch (err: any) {
-        // $FlowFixMe
-        // $FlowFixMe: PipelineEvent doesn't have 'job:failed', cast to any
-        onEvent?.({ type: 'job:failed' as any, error: err.message });
-        // $FlowFixMe
-        return { status: 'failed', output: err.message } as JobResult;
-      }
-
-      // $FlowFixMe
-      const qcArtifacts: any[] = resultMap.get('qc') || [];
-      if (qcArtifacts && qcArtifacts.length > 0) {
-        // $FlowFixMe
-        const qcMeta: any = (qcArtifacts[0] as any).meta ?? {};
-        if (qcMeta.checks) {
-          // $FlowFixMe
-          const allPassed: boolean = (qcMeta.checks as any[]).every(function(c: any) { return c.pass; });
-          if (!allPassed) {
-            // $FlowFixMe
-            const feedbackArtifact: Artifact = qcArtifacts.find(function(a: any) { return a.kind === 'text'; });
-            return { status: 'qc_failed', artifact: feedbackArtifact ?? qcArtifacts[0], output: 'quality control failures; see artifact for details' } as JobResult;
-          }
-        }
-      }
-
-      // $FlowFixMe
-      const publishArtifacts: any[] = resultMap.get('publish') || [];
-      if (publishArtifacts && publishArtifacts.length > 0) {
-        // $FlowFixMe
-        const publishMeta: any = (publishArtifacts[0] as any).meta ?? {};
-        return {
-          status: 'done' as const,
-          artifact: publishArtifacts[0],
-          output: 'YouTube upload ready (private). Title: ' + (publishMeta.videoTitle ?? 'unknown') + '. Use sau CLI to publish.',
-        } as JobResult;
-      }
-
-      // $FlowFixMe
-      let lastArtifact: any;
-      // $FlowFixMe
-      for (var _i = 0; _i < ['publish', 'qc', 'edit', 'voice', 'music', 'clips', 'images', 'shots', 'script', 'brief'].length; _i++) {
-        // $FlowFixMe
-        const stageName: string = ['publish', 'qc', 'edit', 'voice', 'music', 'clips', 'images', 'shots', 'script', 'brief'][_i];
-        // $FlowFixMe
-        const arts = resultMap.get(stageName);
-        if (arts && arts.length > 0) { lastArtifact = arts[arts.length - 1]; }
-      }
-      // $FlowFixMe
-      // $FlowFixMe: lastArtifact may be TS-unaware
-      // $FlowFixMe: lastArtifact narrowed by runtime check above
-      const statusStr: string = lastArtifact != null ? 'done' : 'partial' as string;
-      return {
-        status: statusStr,
-        artifact: lastArtifact,
-        output: 'pipeline completed but no publish artifact generated',
-      } as JobResult;
-    } finally {
-      // $FlowFixMe
-      release();
-    }
-  } catch (policyError: any) {
-    // $FlowFixMe: PipelineEvent doesn't have 'policy:blocked', cast to any
-    onEvent?.({ type: 'policy:blocked' as any, detail: policyError.message });
-    return { status: 'policy_blocked', output: policyError.message } as JobResult;
+    const result = await new Pipeline(stages, {
+      onEvent: options.onEvent,
+      sleep: options.sleep,
+    }).run(job);
+    const finalArtifact = result.get('publish')?.[0];
+    if (!finalArtifact) return { status: 'failed', output: 'اكتمل المسار دون إنشاء حزمة الإنتاج.' };
+    return {
+      status: 'done',
+      artifact: finalArtifact,
+      output: 'اكتملت حزمة السيناريو ولوحة المشاهد. لم يتم توليد ملف فيديو أو نشره.',
+    };
+  } catch (error) {
+    return { status: 'failed', output: error instanceof Error ? error.message : String(error) };
   }
 }
 
-// $FlowFixMe
-export async function runArabicShortsJob(topic: string, options: any = {}): Promise<JobResult> {
-  // $FlowFixMe
-  return runJob(topic, { catalog: options.catalog, ledger: options.ledger, router: options.router, policyGuard: options.policyGuard });
+export function runArabicShortsJob(topic: string, options: JobRunnerOptions = {}): Promise<JobResult> {
+  return runJob(topic, options);
 }

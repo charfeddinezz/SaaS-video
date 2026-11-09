@@ -8,10 +8,14 @@
     "node": ">=20.11"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "dev": "vite",
+    "build": "npm run build:core && npm run build:ui",
+    "build:core": "tsc -p tsconfig.json",
+    "build:ui": "vite build",
+    "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "catalog": "node scripts/validate-catalog.mjs",
-    "test": "node --test dist"
+    "test": "node --test dist/core/*.test.js"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

@@ -20,6 +20,7 @@ export interface StageContext {
 }
 
 export interface QualityGate {
+  name: string;
   /** Throwing or returning ok:false blocks the stage. */
   check(artifacts: Artifact[]): Promise<{ ok: boolean; score?: number; reason?: string }>;
 }
@@ -50,9 +51,7 @@ export interface PipelineOptions {
   ledger?: import('./ledger.js').CreditLedger;
 }
 
-export interface PipelineArtifacts {
-  [stage: StageName]: Artifact[];
-}
+export type PipelineArtifacts = Partial<Record<StageName, Artifact[]>>;
 
 export class PipelineError extends Error {
   constructor(
@@ -98,14 +97,12 @@ export class Pipeline {
         await this.emit({ type: 'stage:start', stage: stage.name, attempt });
         try {
           const extra: Record<string, any> = {};
-          if (router && stage.name === 'clips') {
+          if (router && ledger && stage.name === 'clips') {
             const picked = router.pick('text2video', ledger);
             extra.site = picked?.site;
-            console.log('PIPELINE: clips extra.site =', extra.site?.id || 'undefined');
           }
-          console.log('PIPELINE: about to call stage.run with extra =', extra);
           const artifacts = await this.withTimeout(
-            stage.run({ job, attempt, artifacts: done, signal: undefined, ...extra }),
+            stage.run({ job, attempt, artifacts: done }, extra),
             stage.timeoutMs ?? 15 * 60_000,
           );
           for (const gate of stage.gates ?? []) {

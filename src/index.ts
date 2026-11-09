@@ -4,6 +4,7 @@ export * from './core/ledger.js';
 export * from './core/router.js';
 export * from './core/pipeline.js';
 export * from './core/policy.js';
+export * from './core/studio.js';
 export * from './automation/session.js';
 export * from './providers/webchat2api.js';
 export * from './upload/social-auto-upload.js';
